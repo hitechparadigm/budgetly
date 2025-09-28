@@ -1,6 +1,6 @@
 import { useRouter } from "expo-router";
 import React, { useState, useContext } from "react";
-import { View, Text, TextInput, Pressable } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet } from "react-native";
 import { BudgetCtx } from "../_layout";
 
 export default function Onboarding() {
@@ -36,7 +36,9 @@ export default function Onboarding() {
       ["Lifestyle", Math.round(wants * 0.7)],
       ["Personal", Math.round(wants * 0.3)],
       ["Savings/Goals", Math.round(savings)],
-    ].map(([name, planned], i) => ({ id: `c${i}`, name: String(name), planned: Number(planned), spent: 0 }));
+    ].map(([name, planned], i) => ({
+      id: `c${i}`, name: String(name), planned: Number(planned), spent: 0
+    }));
 
     setBudget({ month: "2025-09", categories: cats });
     router.replace("/(tabs)/budget");
@@ -50,27 +52,53 @@ export default function Onboarding() {
   }
 
   return (
-    <View className="flex-1 bg-white p-6">
-      <Text className="text-2xl font-bold mb-2">Quick Start</Text>
-      <Text className="text-slate-600 mb-4">Enter income & fixed costs. Choose Sample or DIY.</Text>
+    <View style={styles.container}>
+      <Text style={styles.title}>Quick Start</Text>
+      <Text style={styles.subtitle}>Enter your income & fixed costs. Choose Sample or DIY.</Text>
 
-      <Text className="mt-2">Primary income</Text>
-      <TextInput className="border rounded p-2" keyboardType="numeric" value={incomePrimary} onChangeText={setIncomePrimary} />
-      <Text className="mt-2">Other income</Text>
-      <TextInput className="border rounded p-2" keyboardType="numeric" value={incomeOther} onChangeText={setIncomeOther} />
+      <Text style={styles.label}>Primary income</Text>
+      <TextInput style={styles.input} keyboardType="numeric" value={incomePrimary} onChangeText={setIncomePrimary} />
 
-      <Text className="mt-4 font-semibold">Fixed costs</Text>
-      <Text className="mt-2">Rent</Text>
-      <TextInput className="border rounded p-2" keyboardType="numeric" value={rent} onChangeText={setRent} />
-      <Text className="mt-2">Mortgage</Text>
-      <TextInput className="border rounded p-2" keyboardType="numeric" value={mortgage} onChangeText={setMortgage} />
-      <Text className="mt-2">Utilities</Text>
-      <TextInput className="border rounded p-2" keyboardType="numeric" value={utilities} onChangeText={setUtilities} />
+      <Text style={styles.label}>Other income</Text>
+      <TextInput style={styles.input} keyboardType="numeric" value={incomeOther} onChangeText={setIncomeOther} />
 
-      <View className="flex-row gap-3 mt-6">
-        <Pressable onPress={sampleBudget} className="bg-blue-600 px-4 py-2 rounded"><Text className="text-white">Use Suggested Sample</Text></Pressable>
-        <Pressable onPress={diyBudget} className="border px-4 py-2 rounded"><Text>Start DIY</Text></Pressable>
+      <Text style={[styles.label, styles.sectionHeading]}>Fixed costs</Text>
+
+      <Text style={styles.label}>Rent</Text>
+      <TextInput style={styles.input} keyboardType="numeric" value={rent} onChangeText={setRent} />
+
+      <Text style={styles.label}>Mortgage</Text>
+      <TextInput style={styles.input} keyboardType="numeric" value={mortgage} onChangeText={setMortgage} />
+
+      <Text style={styles.label}>Utilities</Text>
+      <TextInput style={styles.input} keyboardType="numeric" value={utilities} onChangeText={setUtilities} />
+
+      <View style={styles.actions}>
+        <Pressable onPress={sampleBudget} style={[styles.btn, styles.btnPrimary]}>
+          <Text style={styles.btnPrimaryText}>Use Suggested Sample</Text>
+        </Pressable>
+        <Pressable onPress={diyBudget} style={[styles.btn, styles.btnOutline]}>
+          <Text style={styles.btnOutlineText}>Start DIY</Text>
+        </Pressable>
       </View>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: "#fff", padding: 24 },
+  title: { fontSize: 22, fontWeight: "700", marginBottom: 6 },
+  subtitle: { color: "#475569", marginBottom: 12 },
+  sectionHeading: { marginTop: 12, fontWeight: "700" },
+  label: { marginTop: 8 },
+  input: {
+    borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 10, backgroundColor: "#fff"
+  },
+  actions: { flexDirection: "row", gap: 12, marginTop: 16, flexWrap: "wrap" },
+  btn: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 8 },
+  btnPrimary: { backgroundColor: "#2563eb" },
+  btnPrimaryText: { color: "#fff", fontWeight: "600" },
+  btnOutline: { borderWidth: 1, borderColor: "#cbd5e1" },
+  btnOutlineText: { color: "#0f172a", fontWeight: "600" }
+});

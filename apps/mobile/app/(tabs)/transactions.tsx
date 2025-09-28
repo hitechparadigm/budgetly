@@ -42,27 +42,32 @@ export default function TransactionsScreen() {
     [budget]
   );
 
-  // Load persisted txns on web
-  useEffect(() => {
-    if (!budget) return;
-    if (Platform.OS === "web") {
-      try {
-        const raw = localStorage.getItem(storageKey);
-        if (raw) setTxns(JSON.parse(raw));
-      } catch {}
-    }
-    // default cat
-    if (budget.categories[0] && !catId) setCatId(budget.categories[0].id);
-  }, [budget]);
+  // ---- EFFECTS (top-level, never conditional) ----
 
-  // Persist on web
+  // Load persisted txns whenever the storage key changes (web only)
   useEffect(() => {
-    if (Platform.OS === "web") {
-      try {
-        localStorage.setItem(storageKey, JSON.stringify(txns));
-      } catch {}
-    }
+    if (Platform.OS !== "web") return;
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw) setTxns(JSON.parse(raw));
+    } catch {}
+  }, [storageKey]);
+
+  // Default category once budget/categories are available
+  useEffect(() => {
+    if (!budget?.categories?.[0]) return;
+    if (!catId) setCatId(budget.categories[0].id);
+  }, [budget, catId]);
+
+  // Persist transactions whenever they change (web only)
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(txns));
+    } catch {}
   }, [txns, storageKey]);
+
+  // ---- RENDER ----
 
   if (!budget) {
     return (
@@ -72,6 +77,9 @@ export default function TransactionsScreen() {
       </View>
     );
   }
+
+  // Non-null alias for TypeScript (safe after early return)
+  const b = budget as NonNullable<typeof budget>;
 
   const onAdd = () => {
     const amt = Number(amount);
@@ -84,17 +92,14 @@ export default function TransactionsScreen() {
       categoryId: catId,
       notes: notes.trim() || undefined,
     };
-    // Update local list
-    setTxns((prev) => [t, ...prev].slice(0, 50));
-    // Update budget totals via context
-    addTxn(catId, amt);
-    // Reset fields
+    setTxns((prev) => [t, ...prev].slice(0, 50)); // local list
+    addTxn(catId, amt);                            // update budget totals
     setAmount("");
     setMerchant("");
     setNotes("");
   };
 
-  const selectedCategory = budget.categories.find((c) => c.id === catId);
+  const selectedCategory = b.categories.find((c) => c.id === catId);
 
   return (
     <View style={styles.container}>
@@ -136,7 +141,7 @@ export default function TransactionsScreen() {
         <View style={styles.field}>
           <Text style={styles.label}>Select Category</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 6 }}>
-            {budget.categories.map((c) => {
+            {b.categories.map((c) => {
               const active = c.id === catId;
               return (
                 <Pressable
@@ -191,7 +196,7 @@ export default function TransactionsScreen() {
             data={txns}
             keyExtractor={(t) => t.id}
             renderItem={({ item }) => {
-              const cat = budget.categories.find((c) => c.id === item.categoryId);
+              const cat = b.categories.find((c) => c.id === item.categoryId);
               return (
                 <View style={styles.row}>
                   <View style={{ flex: 1 }}>
