@@ -1,0 +1,36 @@
+# Node / package managers
+node_modules/
+npm-debug.log*
+yarn.lock
+pnpm-lock.yaml
+
+# Expo / RN
+.expo/
+.expo-shared/
+web-build/
+android/
+ios/
+*.apk
+*.aab
+
+# Build outputs
+dist/
+build/
+**/*.tsbuildinfo
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Generated
+apps/mobile/expo-env.d.ts
+
+# AWS CDK
+infra/cdk.out/
