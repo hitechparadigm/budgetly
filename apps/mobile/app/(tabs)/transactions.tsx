@@ -1,4 +1,11 @@
-import React, { useContext, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   View,
   Text,
@@ -8,12 +15,14 @@ import {
   StyleSheet,
   Platform,
   ScrollView,
+  Alert,
 } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import { BudgetCtx } from "../_layout";
 
 type Txn = {
   id: string;
-  date: string;        // YYYY-MM-DD
+  date: string; // YYYY-MM-DD
   amount: number;
   merchant?: string;
   categoryId: string;
@@ -36,22 +45,57 @@ export default function TransactionsScreen() {
   const [catId, setCatId] = useState<string>("");
   const [txns, setTxns] = useState<Txn[]>([]);
 
-  // Key to persist this month's simple txns (web only)
+  // Undo state
+  const [lastDeleted, setLastDeleted] = useState<Txn | null>(null);
+  const [undoVisible, setUndoVisible] = useState<boolean>(false);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Persist key (web)
   const storageKey = useMemo(
     () => (budget ? `txns-${budget.month}` : "txns"),
     [budget]
   );
 
-  // ---- EFFECTS (top-level, never conditional) ----
-
-  // Load persisted txns whenever the storage key changes (web only)
-  useEffect(() => {
+  // Helper to reload from storage
+  const reloadFromStorage = useCallback(() => {
     if (Platform.OS !== "web") return;
     try {
       const raw = localStorage.getItem(storageKey);
-      if (raw) setTxns(JSON.parse(raw));
+      setTxns(raw ? JSON.parse(raw) : []);
     } catch {}
   }, [storageKey]);
+
+  // Load from localStorage when key changes
+  useEffect(() => {
+    reloadFromStorage();
+  }, [reloadFromStorage]);
+
+  // Refresh when this screen/tab gains focus
+  useFocusEffect(
+    useCallback(() => {
+      reloadFromStorage();
+    }, [reloadFromStorage])
+  );
+
+  // Cross-tab reloading (fires when another tab changes localStorage)
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    const onStorage = (e: StorageEvent) => {
+      if (e?.key && e.key !== storageKey) return;
+      reloadFromStorage();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [storageKey, reloadFromStorage]);
+
+  // Same-tab custom event from Budget/Transactions ("txns-updated")
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    const onCustom = () => reloadFromStorage();
+    window.addEventListener("txns-updated", onCustom as EventListener);
+    return () =>
+      window.removeEventListener("txns-updated", onCustom as EventListener);
+  }, [reloadFromStorage]);
 
   // Default category once budget/categories are available
   useEffect(() => {
@@ -59,7 +103,7 @@ export default function TransactionsScreen() {
     if (!catId) setCatId(budget.categories[0].id);
   }, [budget, catId]);
 
-  // Persist transactions whenever they change (web only)
+  // Persist txns on change (Web)
   useEffect(() => {
     if (Platform.OS !== "web") return;
     try {
@@ -67,23 +111,30 @@ export default function TransactionsScreen() {
     } catch {}
   }, [txns, storageKey]);
 
-  // ---- RENDER ----
+  // Cleanup undo timer on unmount
+  useEffect(() => {
+    return () => {
+      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    };
+  }, []);
 
   if (!budget) {
     return (
       <View style={styles.container}>
         <Text style={styles.title}>Transactions</Text>
-        <Text style={styles.subtitle}>No budget yet. Start from the Budget tab.</Text>
+        <Text style={styles.subtitle}>
+          No budget yet. Start from the Budget tab.
+        </Text>
       </View>
     );
   }
 
-  // Non-null alias for TypeScript (safe after early return)
-  const b = budget as NonNullable<typeof budget>;
+  const b = budget;
 
   const onAdd = () => {
     const amt = Number(amount);
     if (!catId || isNaN(amt) || amt <= 0) return;
+
     const t: Txn = {
       id: String(Date.now()),
       date,
@@ -92,11 +143,103 @@ export default function TransactionsScreen() {
       categoryId: catId,
       notes: notes.trim() || undefined,
     };
-    setTxns((prev) => [t, ...prev].slice(0, 50)); // local list
-    addTxn(catId, amt);                            // update budget totals
+
+    // Update list + write storage immediately, then notify
+    setTxns((prev) => {
+      const next = [t, ...prev].slice(0, 50);
+      if (Platform.OS === "web") {
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(next));
+        } catch {}
+      }
+      return next;
+    });
+
+    // Update budget totals
+    addTxn(catId, amt);
+
+    // Broadcast after storage is written
+    if (Platform.OS === "web") {
+      window.dispatchEvent(new Event("txns-updated"));
+    }
+
+    // Reset fields
     setAmount("");
     setMerchant("");
     setNotes("");
+  };
+
+  const performDelete = (txn: Txn) => {
+    // remove from list + write storage
+    setTxns((prev) => {
+      const next = prev.filter((t) => t.id !== txn.id);
+      if (Platform.OS === "web") {
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(next));
+        } catch {}
+      }
+      return next;
+    });
+
+    // reverse spent
+    addTxn(txn.categoryId, -txn.amount);
+
+    // notify
+    if (Platform.OS === "web") {
+      window.dispatchEvent(new Event("txns-updated"));
+    }
+
+    // show undo
+    setLastDeleted(txn);
+    setUndoVisible(true);
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = setTimeout(() => {
+      setUndoVisible(false);
+      setLastDeleted(null);
+    }, 5000);
+  };
+
+  const handleLongPress = (txn: Txn) => {
+    if (Platform.OS === "web") {
+      const ok = window.confirm("Delete this transaction?");
+      if (ok) performDelete(txn);
+    } else {
+      Alert.alert(
+        "Delete transaction?",
+        "This will remove it and subtract the amount from the category.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Delete", style: "destructive", onPress: () => performDelete(txn) },
+        ]
+      );
+    }
+  };
+
+  const onUndo = () => {
+    if (!lastDeleted) return;
+
+    // put back + write storage
+    setTxns((prev) => {
+      const next = [lastDeleted!, ...prev];
+      if (Platform.OS === "web") {
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(next));
+        } catch {}
+      }
+      return next;
+    });
+
+    // restore budget
+    addTxn(lastDeleted.categoryId, lastDeleted.amount);
+
+    // notify
+    if (Platform.OS === "web") {
+      window.dispatchEvent(new Event("txns-updated"));
+    }
+
+    setLastDeleted(null);
+    setUndoVisible(false);
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
   };
 
   const selectedCategory = b.categories.find((c) => c.id === catId);
@@ -140,7 +283,11 @@ export default function TransactionsScreen() {
 
         <View style={styles.field}>
           <Text style={styles.label}>Select Category</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 6 }}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={{ marginTop: 6 }}
+          >
             {b.categories.map((c) => {
               const active = c.id === catId;
               return (
@@ -149,7 +296,9 @@ export default function TransactionsScreen() {
                   onPress={() => setCatId(c.id)}
                   style={[styles.chip, active && styles.chipActive]}
                 >
-                  <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                  <Text
+                    style={[styles.chipText, active && styles.chipTextActive]}
+                  >
                     {c.name}
                   </Text>
                 </Pressable>
@@ -158,7 +307,8 @@ export default function TransactionsScreen() {
           </ScrollView>
           {selectedCategory && (
             <Text style={styles.helper}>
-              {selectedCategory.name}: {fmt(selectedCategory.spent)} / {fmt(selectedCategory.planned)}
+              {selectedCategory.name}: {fmt(selectedCategory.spent)} /{" "}
+              {fmt(selectedCategory.planned)}
             </Text>
           )}
         </View>
@@ -180,7 +330,8 @@ export default function TransactionsScreen() {
           disabled={!catId || !amount || Number(amount) <= 0}
           style={[
             styles.primaryBtn,
-            (!catId || !amount || Number(amount) <= 0) && styles.primaryBtnDisabled,
+            (!catId || !amount || Number(amount) <= 0) &&
+              styles.primaryBtnDisabled,
           ]}
         >
           <Text style={styles.primaryBtnText}>Add</Text>
@@ -198,24 +349,36 @@ export default function TransactionsScreen() {
             renderItem={({ item }) => {
               const cat = b.categories.find((c) => c.id === item.categoryId);
               return (
-                <View style={styles.row}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontWeight: "600" }}>
-                      {item.merchant || cat?.name || "Transaction"}
-                    </Text>
-                    <Text style={{ color: "#64748b", fontSize: 12 }}>
-                      {item.date} • {cat?.name ?? "Uncategorized"}
-                      {item.notes ? ` • ${item.notes}` : ""}
-                    </Text>
+                <Pressable onLongPress={() => handleLongPress(item)}>
+                  <View style={styles.row}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontWeight: "600" }}>
+                        {item.merchant || cat?.name || "Transaction"}
+                      </Text>
+                      <Text style={{ color: "#64748b", fontSize: 12 }}>
+                        {item.date} • {cat?.name ?? "Uncategorized"}
+                        {item.notes ? ` • ${item.notes}` : ""}
+                      </Text>
+                    </View>
+                    <Text style={{ fontWeight: "700" }}>{fmt(item.amount)}</Text>
                   </View>
-                  <Text style={{ fontWeight: "700" }}>{fmt(item.amount)}</Text>
-                </View>
+                </Pressable>
               );
             }}
             ItemSeparatorComponent={() => <View style={styles.separator} />}
           />
         )}
       </View>
+
+      {/* Undo banner */}
+      {undoVisible && lastDeleted && (
+        <View style={styles.undoBar}>
+          <Text style={styles.undoText}>Transaction deleted</Text>
+          <Pressable onPress={onUndo} style={styles.undoBtn}>
+            <Text style={styles.undoBtnText}>Undo</Text>
+          </Pressable>
+        </View>
+      )}
     </View>
   );
 }
@@ -277,4 +440,26 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   separator: { height: 1, backgroundColor: "#e5e7eb" },
+
+  // Undo banner
+  undoBar: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    bottom: 16,
+    backgroundColor: "#0f172a",
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    shadowColor: "#000",
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  undoText: { color: "#fff", fontWeight: "600" },
+  undoBtn: { paddingHorizontal: 8, paddingVertical: 4 },
+  undoBtnText: { color: "#60a5fa", fontWeight: "700" },
 });
